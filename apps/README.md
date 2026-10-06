@@ -1,60 +1,37 @@
-# Smart Home Sensor Management API
+# Приложение для работы с датчиками
 
-## Prerequisites
+Нужны Docker и Docker Compose. Порты 8080 и 8081 должны быть свободны.
 
-- Docker and Docker Compose
-
-## Getting Started
-
-### Option 1: Using Docker Compose (Recommended)
-
-The easiest way to start the application is to use Docker Compose:
+Из папки `apps`:
 
 ```bash
-./init.sh
+docker compose up --build -d
+docker compose ps
 ```
 
-This script will:
-
-1. Build and start the PostgreSQL and application containers
-2. Wait for the services to be ready
-3. Display information about how to access the API
-
-Alternatively, you can run Docker Compose directly:
+Монолит: `http://localhost:8080`. Сервис температуры: `http://localhost:8081`.
+PostgreSQL использует именованный том. Скрипт `smart_home/init.sql` создаёт базу `smarthome` и таблицы при первом запуске с пустым томом.
 
 ```bash
-docker-compose up -d
+curl "http://localhost:8081/temperature?location=Bedroom"
+curl "http://localhost:8081/temperature?sensorId=1"
+curl "http://localhost:8081/temperature/2"
 ```
 
-The API will be available at http://localhost:8080
+Комнаты и ID: `Living Room` — `1`, `Bedroom` — `2`, `Kitchen` — `3`. Для неизвестной комнаты используется ID `0`, для неизвестного ID — комната `Unknown`.
 
-### Option 2: Manual setup
-
-If you prefer to run the application without Docker:
-
-1. Start the PostgreSQL database:
+Импортировать `smarthome-api.postman_collection.json` в Postman. Вызвать `Create Sensor`, затем повторить `Get All Sensors`. Создание сохраняет датчик; чтение запрашивает новое показание у сервиса температуры.
 
 ```bash
-docker-compose up -d postgres
+curl -X POST "http://localhost:8080/api/v1/sensors" -H "Content-Type: application/json" -d '{"name":"Bedroom sensor","type":"temperature","location":"Bedroom","unit":"C"}'
+curl "http://localhost:8080/api/v1/sensors"
 ```
 
-2. Build and run the application:
+Просмотр журналов и остановка:
 
 ```bash
-go build -o smarthome
-./smarthome
+docker compose logs app temperature-api postgres
+docker compose down
 ```
 
-## API Testing
-
-A Postman collection is provided for testing the API. Import the `smarthome-api.postman_collection.json` file into Postman to get started.
-
-## API Endpoints
-
-- `GET /health` - Health check
-- `GET /api/v1/sensors` - Get all sensors
-- `GET /api/v1/sensors/:id` - Get a specific sensor
-- `POST /api/v1/sensors` - Create a new sensor
-- `PUT /api/v1/sensors/:id` - Update a sensor
-- `DELETE /api/v1/sensors/:id` - Delete a sensor
-- `PATCH /api/v1/sensors/:id/value` - Update a sensor's value and status
+Команда `down` сохраняет том PostgreSQL. Учётные данные в Compose предназначены для локального учебного запуска.

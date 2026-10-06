@@ -1,0 +1,29 @@
+@startuml
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+title Сценарии — компоненты
+Container(gateway, "API Gateway", "REST", "Создание правила с JWT")
+Container(registry, "Реестр устройств", "REST", "Устройства и владельцы")
+Container(modules, "Сервисы модулей", "REST", "Отопление, освещение, ворота, наблюдение")
+ContainerQueue(broker, "MQTT-брокер", "TLS", "Измерения устройств")
+ContainerDb(db, "База сценариев", "PostgreSQL", "Scenario, ScenarioRun; уникальные scenario_id + event_id")
+Container_Boundary(service, "Сценарии") {
+ Component(api, "ScenarioController", "Go, REST", "POST /scenarios; условие и действие")
+ Component(manager, "ScenarioService", "Go", "Проверяет оба устройства, метрику, команду и владельца")
+ Component(consumer, "EventConsumer", "Go, MQTT", "Получает измерение с event_id")
+ Component(engine, "RuleEngine", "Go", "Порог; действие при переходе false → true; дедупликация")
+ Component(dispatcher, "CommandDispatcher", "Go, REST", "Контекст владельца; стабильный command_id и ограниченные повторы")
+ Component(repository, "ScenarioRepository", "Go", "Правила, последнее условие и запуски")
+}
+Rel(gateway, api, "Создаёт правило", "HTTPS/JSON")
+Rel(api, manager, "Проверяет и сохраняет", "Вызов")
+Rel(manager, registry, "Проверяет доступ и совместимость", "HTTPS/REST, timeout")
+Rel(manager, repository, "Записывает правило", "Вызов")
+Rel(broker, consumer, "Передаёт измерение", "MQTT/TLS, QoS 1")
+Rel(consumer, engine, "Проверяет правила", "Вызов")
+Rel(engine, repository, "Читает правила, отмечает событие", "Вызов")
+Rel(engine, dispatcher, "Выполняет действие", "Вызов")
+Rel(dispatcher, modules, "POST команды; service JWT + owner subject", "HTTPS/JSON")
+Rel(repository, db, "Читает и пишет", "SQL")
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,26 @@
+@startuml
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+title Телеметрия — компоненты
+Container(gateway, "API Gateway", "REST", "Запрос с JWT")
+Container(registry, "Реестр устройств", "REST", "Устройства и владельцы")
+ContainerQueue(broker, "MQTT-брокер", "TLS", "telemetry/{deviceId}")
+ContainerDb(db, "База телеметрии", "PostgreSQL", "Измерения; уникальный event_id")
+Container_Boundary(service, "Телеметрия") {
+ Component(api, "TelemetryController", "Go, REST", "GET /devices/{id}/telemetry; ограничение числа записей")
+ Component(reader, "TelemetryReader", "Go", "Проверяет владельца и получает историю")
+ Component(consumer, "TelemetryConsumer", "Go, MQTT", "Принимает event_id, device_id, metric, value, unit, recorded_at")
+ Component(processor, "TelemetryProcessor", "Go", "Проверяет тип и метрику; игнорирует повторные event_id")
+ Component(repository, "TelemetryRepository", "Go", "Читает историю и записывает измерения")
+}
+Rel(gateway, api, "Запрашивает историю", "HTTPS/JSON")
+Rel(api, reader, "Читает измерения", "Вызов")
+Rel(reader, registry, "Проверяет доступ", "HTTPS/REST, timeout")
+Rel(reader, repository, "Выбирает измерения", "Вызов")
+Rel(broker, consumer, "Передаёт измерения", "MQTT/TLS, QoS 1")
+Rel(consumer, processor, "Обрабатывает событие", "Вызов")
+Rel(processor, registry, "Проверяет устройство и метрику", "HTTPS/REST, timeout")
+Rel(processor, repository, "Сохраняет один раз", "Вызов")
+Rel(repository, db, "Читает и пишет", "SQL")
+SHOW_LEGEND()
+@enduml
