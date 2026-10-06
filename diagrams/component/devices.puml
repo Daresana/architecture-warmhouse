@@ -1,0 +1,27 @@
+@startuml
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+title Реестр устройств — компоненты
+Container(client, "Шлюз / сервисы", "REST", "Передают запрос с JWT")
+ContainerQueue(broker, "MQTT-брокер", "TLS", "Доступ устройства к своим топикам")
+ContainerDb(db, "База реестра", "PostgreSQL", "User, House, Module, HouseModule, DeviceType, Device")
+Container_Boundary(service, "Реестр устройств") {
+ Component(api, "DeviceController", "Go, REST", "Регистрация и описание устройства")
+ Component(registration, "RegistrationService", "Go", "Проверяет код подключения и уникальность серийного номера")
+ Component(catalog, "CatalogService", "Go", "Модули, типы, протоколы, команды и метрики")
+ Component(access, "OwnershipService", "Go", "Проверяет subject JWT и владельца дома/устройства")
+ Component(provisioning, "BrokerProvisioner", "Go", "Credentials и ACL; активирует устройство после подключения")
+ Component(repository, "DeviceRepository", "Go", "Читает и сохраняет реестр")
+}
+Rel(client, api, "POST /devices, GET /devices/{id}", "HTTPS/JSON")
+Rel(api, access, "Проверяет доступ", "Вызов")
+Rel(api, registration, "Подключает устройство", "Вызов")
+Rel(registration, catalog, "Проверяет совместимость и модуль дома", "Вызов")
+Rel(registration, provisioning, "Настраивает подключение", "Вызов")
+Rel(provisioning, broker, "Создаёт учётную запись и ACL", "Management API/HTTPS")
+Rel(registration, repository, "Сохраняет привязку и статус", "Вызов")
+Rel(access, repository, "Читает владельца", "Вызов")
+Rel(catalog, repository, "Читает тип и модуль", "Вызов")
+Rel(repository, db, "Читает и пишет", "SQL")
+SHOW_LEGEND()
+@enduml

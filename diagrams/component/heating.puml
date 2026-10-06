@@ -1,0 +1,28 @@
+@startuml
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+title Отопление — компоненты
+Container(client, "Шлюз / сценарии", "REST", "Запрос с JWT и контекстом владельца")
+Container(registry, "Реестр устройств", "REST", "Владелец, тип, протокол и разрешённые команды")
+ContainerQueue(broker, "MQTT-брокер", "TLS", "commands/{id}, state/{id}; QoS 1")
+ContainerDb(db, "База: отопление", "PostgreSQL", "Command, DeviceState")
+
+Container_Boundary(service, "Отопление") {
+ Component(api, "HeatingController", "Go, REST", "POST /heating/devices/{id}/commands")
+ Component(commands, "CommandService", "Go", "Включение/выключение отопления; проверка доступа и command_id")
+ Component(adapter, "DeviceAdapter", "Go, MQTT", "Преобразует команды в протокол партнёра; ограниченные повторы публикации")
+ Component(consumer, "StateConsumer", "Go, MQTT", "Подтверждение команды; фактическое состояние; timeout без подтверждения")
+ Component(repository, "CommandRepository", "Go", "Команды и состояние; повторный ID не создаёт вторую команду")
+}
+Rel(client, api, "Отправляет команду", "HTTPS/JSON")
+Rel(api, commands, "Проверяет и принимает", "Вызов")
+Rel(commands, registry, "Проверяет владельца и тип; при ошибке не отправляет", "HTTPS/REST, timeout")
+Rel(commands, repository, "Сохраняет команду; получает повтор", "Вызов")
+Rel(commands, adapter, "Отправляет новую команду", "Вызов")
+Rel(adapter, broker, "Публикует команду, retain=false", "MQTT/TLS, QoS 1")
+
+Rel(broker, consumer, "Передаёт подтверждение", "MQTT/TLS")
+Rel(consumer, repository, "Обновляет команду и состояние", "Вызов")
+Rel(repository, db, "Читает и пишет", "SQL")
+SHOW_LEGEND()
+@enduml

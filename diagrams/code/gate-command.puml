@@ -1,0 +1,58 @@
+@startuml
+title Ворота — приём команды и подтверждение
+autonumber
+actor "Владелец" as User
+participant "API Gateway" as Gateway
+participant "GateController" as Controller
+participant "CommandService" as Service
+participant "Реестр устройств" as Registry
+database "База ворот" as DB
+queue "MQTT-брокер" as Broker
+participant "Замок ворот" as Device
+participant "StateConsumer" as Consumer
+User -> Gateway : POST /gates/devices/7/commands\nJWT, command_id, command=lock
+Gateway -> Gateway : Проверить подпись JWT
+Gateway -> Controller : Запрос и subject владельца
+Controller -> Service : AcceptCommand(subject, deviceId, command)
+Service -> Registry : GET /devices/7 с контекстом пользователя
+alt Чужое устройство / нет устройства / реестр недоступен
+ Registry --> Service : 403 / 404 / timeout
+ Service --> Controller : Отклонить; при timeout — 503
+ Controller --> Gateway : 403 / 404 / 503
+ Gateway --> User : Ошибка
+else Доступ разрешён, тип поддерживает lock
+ Registry --> Service : Устройство, владелец и тип
+ Service -> DB : Найти command_id
+ alt ID уже есть с тем же содержимым
+  DB --> Service : Сохранённая команда
+  Service --> Controller : Сохранённый результат
+  Controller --> Gateway : 202
+  Gateway --> User : 202; без повторного действия
+ else ID занят другим содержимым
+  Controller --> Gateway : 409
+  Gateway --> User : Конфликт
+ else Новая команда или повтор после publish_failed
+  Service -> DB : Сохранить/обновить pending
+  Service -> Broker : commands/7 {command_id, command:lock}\nQoS 1, retain=false
+  alt Брокер недоступен
+   Service -> DB : publish_failed
+   Controller --> Gateway : 503
+   Gateway --> User : 503; можно повторить с тем же ID
+  else Брокер подтвердил публикацию
+   Broker --> Service : PUBACK
+   Service -> DB : queued
+   Controller --> Gateway : 202, command_id, status=queued
+   Gateway --> User : Команда принята
+   Broker -> Device : Команда; возможны повторы QoS 1
+   Device -> Device : Проверить command_id; выполнить lock один раз
+   Device -> Broker : state/7 {command_id, status:confirmed, state:locked}
+   Broker -> Consumer : Подтверждение устройства
+   Consumer -> DB : confirmed; фактическое состояние locked
+  end
+ end
+end
+note over DB,Device
+ При отсутствии подтверждения команда истекает по timeout.
+ Фактическое состояние не меняется на основании одного 202.
+end note
+@enduml

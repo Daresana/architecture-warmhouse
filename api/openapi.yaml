@@ -1,0 +1,693 @@
+openapi: "3.0.3"
+info:
+  title: "Тёплый дом — API"
+  version: "1.0.0"
+  description: "Пять контрактов проектируемой системы. HTTPS и JWT. Владелец определяется по subject токена; чужое устройство возвращает 403. Внутренние сервисы аутентифицируются service JWT. Только сервис сценариев с разрешённым scope может передать сохранённый owner subject; пользовательский запрос не может подменить владельца. module маршрутизирует запрос к отдельному сервису управления."
+servers:
+  -
+    url: "https://api.warmhouse.example/v1"
+    description: "Адрес проектируемой системы"
+security:
+  -
+    bearerAuth: []
+paths:
+  "/devices":
+    post:
+      operationId: "registerDevice"
+      tags:
+        - "Устройства"
+      description: "Проверить владельца дома, поддерживаемый тип, выбранный модуль и одноразовый код комплекта. Зарегистрировать устройство и настроить доступ к MQTT. Код подключения не хранится открытым. При ошибке настройки доступа вернуть 503; устройство не активировать. Повторный серийный номер — 409."
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/DeviceCreate"
+            examples:
+              request:
+                value:
+                  house_id: 1
+                  type_id: 3
+                  serial_number: "GATE-007"
+                  name: "Ворота"
+                  pairing_code: "EXAMPLE-CODE"
+      responses:
+        "201":
+          description: "Устройство зарегистрировано"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Device"
+              examples:
+                registered:
+                  value:
+                    id: 7
+                    house_id: 1
+                    type_id: 3
+                    serial_number: "GATE-007"
+                    name: "Ворота"
+                    status: "active"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  "/devices/{deviceId}":
+    get:
+      operationId: "getDevice"
+      tags:
+        - "Устройства"
+      description: "Описание зарегистрированного устройства и проверка владельца. Этот же контракт используют остальные сервисы; отсутствующее устройство — 404, чужое — 403. GET не имеет тела запроса; пример deviceId=7."
+      parameters:
+        -
+          $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: "Описание устройства"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Device"
+              examples:
+                device:
+                  value:
+                    id: 7
+                    house_id: 1
+                    type_id: 3
+                    serial_number: "GATE-007"
+                    name: "Ворота"
+                    status: "active"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  "/{module}/devices/{deviceId}/commands":
+    post:
+      operationId: "sendCommand"
+      tags:
+        - "Управление"
+      description: "Шлюз маршрутизирует по module. Сервис сверяет владельца, тип и допустимую команду. heating/lighting: on,off; gates: lock,unlock; monitoring: start,stop. Для MVP parameters — пустой объект. После PUBACK вернуть 202; queued не означает выполнено. QoS 1 допускает повторы: устройство дедуплицирует command_id. Повтор одинакового ID возвращает сохранённый результат; с другим содержимым — 409. После publish_failed тот же ID допускает повтор публикации. Без подтверждения — timeout. Вызов monitoring/start может вернуть временную HTTPS-ссылку после подтверждения камеры."
+      parameters:
+        -
+          name: "module"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            enum:
+              - "heating"
+              - "lighting"
+              - "gates"
+              - "monitoring"
+          examples:
+            gates:
+              value: "gates"
+            heating:
+              value: "heating"
+        -
+          $ref: "#/components/parameters/DeviceId"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/CommandCreate"
+            examples:
+              lock:
+                value:
+                  command_id: "39cf5a0e-1188-4aa9-9fc0-e81721c8a231"
+                  command: "lock"
+                  parameters: {}
+              heating:
+                value:
+                  command_id: "0a9fdff4-fb23-4891-8027-6de20e10c59b"
+                  command: "on"
+                  parameters: {}
+              camera:
+                value:
+                  command_id: "60df2d39-7ac1-4f50-9c8b-e7f955bc9b01"
+                  command: "start"
+                  parameters: {}
+      responses:
+        "202":
+          description: "Новая команда принята или результат повторного запроса"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+              examples:
+                accepted:
+                  value:
+                    command_id: "39cf5a0e-1188-4aa9-9fc0-e81721c8a231"
+                    device_id: 7
+                    status: "queued"
+                    created_at: "2026-10-06T12:00:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  "/devices/{deviceId}/telemetry":
+    get:
+      operationId: "getTelemetry"
+      tags:
+        - "Телеметрия"
+      description: "Проверить владельца устройства через реестр; вернуть последние измерения по recorded_at убыванию. GET не имеет тела запроса. Пример: deviceId=2, metric=temperature, limit=10. Если измерений нет, вернуть пустой массив."
+      parameters:
+        -
+          $ref: "#/components/parameters/DeviceId"
+        -
+          name: "metric"
+          in: "query"
+          schema:
+            type: "string"
+          examples:
+            temperature:
+              value: "temperature"
+        -
+          name: "limit"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+          examples:
+            lastTen:
+              value: 10
+      responses:
+        "200":
+          description: "Последние измерения"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/TelemetryList"
+              examples:
+                measurements:
+                  value:
+                    device_id: 2
+                    items:
+                      -
+                        event_id: "ef4a74ad-40a1-41d2-b84b-ced2c2df7cac"
+                        metric: "temperature"
+                        value: 17.4
+                        unit: "C"
+                        recorded_at: "2026-10-06T12:00:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  "/scenarios":
+    post:
+      operationId: "createScenario"
+      tags:
+        - "Сценарии"
+      description: "MVP: одно условие и одно действие. Оба устройства должны принадлежать дому пользователя; метрика и команда должны поддерживаться их типами. Выполнение при переходе условия false → true. Повторы одного event_id не выполняют правило повторно. Каждому запуску назначается стабильный command_id."
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/ScenarioCreate"
+            examples:
+              request:
+                value:
+                  house_id: 1
+                  name: "Включить отопление при холоде"
+                  trigger:
+                    device_id: 2
+                    metric: "temperature"
+                    operator: "lt"
+                    threshold: 18
+                  action:
+                    module: "heating"
+                    device_id: 3
+                    command: "on"
+                    parameters: {}
+                  enabled: true
+      responses:
+        "201":
+          description: "Сценарий создан"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Scenario"
+              examples:
+                created:
+                  value:
+                    id: 1
+                    house_id: 1
+                    name: "Включить отопление при холоде"
+                    trigger:
+                      device_id: 2
+                      metric: "temperature"
+                      operator: "lt"
+                      threshold: 18
+                    action:
+                      module: "heating"
+                      device_id: 3
+                      command: "on"
+                      parameters: {}
+                    enabled: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: "http"
+      scheme: "bearer"
+      bearerFormat: "JWT"
+  parameters:
+    DeviceId:
+      name: "deviceId"
+      in: "path"
+      required: true
+      schema:
+        type: "integer"
+        minimum: 1
+      examples:
+        gate:
+          value: 7
+        temperature:
+          value: 2
+  responses:
+    BadRequest:
+      description: "Недопустимые данные запроса"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            error:
+              value:
+                code: "invalid_request"
+                message: "Недопустимые данные запроса"
+    Unauthorized:
+      description: "Нужен действительный токен"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            error:
+              value:
+                code: "unauthorized"
+                message: "Нужен действительный токен"
+    Forbidden:
+      description: "Нет доступа к устройству или дому"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            error:
+              value:
+                code: "forbidden"
+                message: "Нет доступа к устройству или дому"
+    NotFound:
+      description: "Устройство не найдено"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            error:
+              value:
+                code: "not_found"
+                message: "Устройство не найдено"
+    Conflict:
+      description: "Идентификатор уже используется"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            error:
+              value:
+                code: "conflict"
+                message: "Идентификатор уже используется"
+    ServerError:
+      description: "Внутренняя ошибка сервиса"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            error:
+              value:
+                code: "internal_error"
+                message: "Внутренняя ошибка сервиса"
+    Unavailable:
+      description: "Зависимый сервис временно недоступен"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            error:
+              value:
+                code: "unavailable"
+                message: "Зависимый сервис временно недоступен"
+  schemas:
+    DeviceCreate:
+      type: "object"
+      required:
+        - "house_id"
+        - "type_id"
+        - "serial_number"
+        - "name"
+        - "pairing_code"
+      additionalProperties: false
+      properties:
+        house_id:
+          type: "integer"
+          minimum: 1
+        type_id:
+          type: "integer"
+          minimum: 1
+        serial_number:
+          type: "string"
+          minLength: 1
+        name:
+          type: "string"
+          minLength: 1
+        pairing_code:
+          type: "string"
+          minLength: 1
+          writeOnly: true
+    Device:
+      type: "object"
+      required:
+        - "id"
+        - "house_id"
+        - "type_id"
+        - "serial_number"
+        - "name"
+        - "status"
+      properties:
+        id:
+          type: "integer"
+          minimum: 1
+        house_id:
+          type: "integer"
+          minimum: 1
+        type_id:
+          type: "integer"
+          minimum: 1
+        serial_number:
+          type: "string"
+        name:
+          type: "string"
+        status:
+          type: "string"
+          enum:
+            - "pending"
+            - "active"
+            - "offline"
+    CommandCreate:
+      type: "object"
+      required:
+        - "command_id"
+        - "command"
+        - "parameters"
+      additionalProperties: false
+      properties:
+        command_id:
+          type: "string"
+          format: "uuid"
+        command:
+          type: "string"
+          enum:
+            - "on"
+            - "off"
+            - "lock"
+            - "unlock"
+            - "start"
+            - "stop"
+        parameters:
+          type: "object"
+          additionalProperties: false
+    CommandResult:
+      type: "object"
+      required:
+        - "command_id"
+        - "device_id"
+        - "status"
+        - "created_at"
+      properties:
+        command_id:
+          type: "string"
+          format: "uuid"
+        device_id:
+          type: "integer"
+          minimum: 1
+        status:
+          type: "string"
+          enum:
+            - "pending"
+            - "queued"
+            - "confirmed"
+            - "publish_failed"
+            - "failed"
+            - "timeout"
+        created_at:
+          type: "string"
+          format: "date-time"
+        stream_url:
+          type: "string"
+          format: "uri"
+          description: "Временная HTTPS-ссылка для подтверждённого monitoring/start, привязанная к владельцу."
+    TelemetryList:
+      type: "object"
+      required:
+        - "device_id"
+        - "items"
+      properties:
+        device_id:
+          type: "integer"
+          minimum: 1
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/Telemetry"
+    Telemetry:
+      type: "object"
+      required:
+        - "event_id"
+        - "metric"
+        - "value"
+        - "unit"
+        - "recorded_at"
+      properties:
+        event_id:
+          type: "string"
+          format: "uuid"
+        metric:
+          type: "string"
+        value:
+          type: "number"
+        unit:
+          type: "string"
+        recorded_at:
+          type: "string"
+          format: "date-time"
+    ScenarioCreate:
+      type: "object"
+      required:
+        - "house_id"
+        - "name"
+        - "trigger"
+        - "action"
+        - "enabled"
+      additionalProperties: false
+      properties:
+        house_id:
+          type: "integer"
+          minimum: 1
+        name:
+          type: "string"
+          minLength: 1
+        trigger:
+          type: "object"
+          required:
+            - "device_id"
+            - "metric"
+            - "operator"
+            - "threshold"
+          additionalProperties: false
+          properties:
+            device_id:
+              type: "integer"
+              minimum: 1
+            metric:
+              type: "string"
+            operator:
+              type: "string"
+              enum:
+                - "lt"
+                - "gt"
+                - "eq"
+            threshold:
+              type: "number"
+        action:
+          type: "object"
+          required:
+            - "module"
+            - "device_id"
+            - "command"
+            - "parameters"
+          additionalProperties: false
+          properties:
+            module:
+              type: "string"
+              enum:
+                - "heating"
+                - "lighting"
+                - "gates"
+                - "monitoring"
+            device_id:
+              type: "integer"
+              minimum: 1
+            command:
+              type: "string"
+              enum:
+                - "on"
+                - "off"
+                - "lock"
+                - "unlock"
+                - "start"
+                - "stop"
+            parameters:
+              type: "object"
+              additionalProperties: false
+        enabled:
+          type: "boolean"
+    Scenario:
+      type: "object"
+      required:
+        - "id"
+        - "house_id"
+        - "name"
+        - "trigger"
+        - "action"
+        - "enabled"
+      additionalProperties: false
+      properties:
+        id:
+          type: "integer"
+          minimum: 1
+        house_id:
+          type: "integer"
+          minimum: 1
+        name:
+          type: "string"
+          minLength: 1
+        trigger:
+          type: "object"
+          required:
+            - "device_id"
+            - "metric"
+            - "operator"
+            - "threshold"
+          additionalProperties: false
+          properties:
+            device_id:
+              type: "integer"
+              minimum: 1
+            metric:
+              type: "string"
+            operator:
+              type: "string"
+              enum:
+                - "lt"
+                - "gt"
+                - "eq"
+            threshold:
+              type: "number"
+        action:
+          type: "object"
+          required:
+            - "module"
+            - "device_id"
+            - "command"
+            - "parameters"
+          additionalProperties: false
+          properties:
+            module:
+              type: "string"
+              enum:
+                - "heating"
+                - "lighting"
+                - "gates"
+                - "monitoring"
+            device_id:
+              type: "integer"
+              minimum: 1
+            command:
+              type: "string"
+              enum:
+                - "on"
+                - "off"
+                - "lock"
+                - "unlock"
+                - "start"
+                - "stop"
+            parameters:
+              type: "object"
+              additionalProperties: false
+        enabled:
+          type: "boolean"
+    Error:
+      type: "object"
+      required:
+        - "code"
+        - "message"
+      properties:
+        code:
+          type: "string"
+        message:
+          type: "string"
